@@ -38,6 +38,18 @@ from report import (
     get_import_template_csv,
     parse_import_csv,
 )
+from workflow_db import (
+    init_workflow_db,
+    get_task_by_sample,
+    create_task_for_sample,
+    get_stage_name,
+    get_status_name,
+    get_priority_name,
+)
+from workflow_pages import (
+    render_workflow_main,
+    render_create_task_from_sample,
+)
 
 st.set_page_config(
     page_title="火山灰样本分析系统",
@@ -46,6 +58,7 @@ st.set_page_config(
 )
 
 init_db()
+init_workflow_db()
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "样本列表"
@@ -72,21 +85,47 @@ def render_sidebar():
     with st.sidebar:
         st.title("🌋 火山灰分析系统")
         st.markdown("---")
-        
+
         nav_items = [
             ("📋 样本列表", "样本列表"),
             ("➕ 新建样本", "新建样本"),
             ("📥 批量导入", "批量导入"),
             ("📊 样本对比", "样本对比"),
             ("📈 剖面分析", "剖面分析"),
-            ("📄 操作日志", "操作日志"),
         ]
-        
+
         for label, page in nav_items:
             is_active = st.session_state.current_page == page
             if st.button(label, use_container_width=True, type="primary" if is_active else "secondary"):
                 navigate_to(page)
-        
+
+        st.markdown("---")
+        st.subheader("� 流程审批")
+
+        wf_items = [
+            ("📋 任务列表", "流程任务"),
+            ("🎯 协作看板", "协作看板"),
+            ("📊 流程统计", "流程统计"),
+            ("⏰ 超期提醒", "超期提醒"),
+            ("📝 创建任务", "创建任务"),
+        ]
+
+        for label, page in wf_items:
+            is_active = st.session_state.current_page == page
+            if st.button(label, use_container_width=True, type="primary" if is_active else "secondary"):
+                navigate_to(page)
+
+        st.markdown("---")
+
+        nav_items2 = [
+            ("📄 操作日志", "操作日志"),
+        ]
+
+        for label, page in nav_items2:
+            is_active = st.session_state.current_page == page
+            if st.button(label, use_container_width=True, type="primary" if is_active else "secondary"):
+                navigate_to(page)
+
         st.markdown("---")
         st.caption("地质实验室 · 火山灰筛分分析")
 
@@ -123,33 +162,77 @@ def render_sample_list():
                       if search in s['sample_no'].lower() 
                       or search in s['sampling_site'].lower()]
     
-    df = pd.DataFrame(samples)
-    
-    display_df = df[['sample_no', 'sampling_site', 'eruption_layer', 'group_name', 
-                     'total_weight', 'sieve_count', 'depth', 'sampling_time', 'created_at']].copy()
-    display_df.columns = ['样本编号', '采样点', '喷发层位', '分组', '总重量(g)', 
-                          '粒级数', '深度(m)', '采样时间', '创建时间']
-    
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-    
+    sample_task_map = {}
+    for s in samples:
+        task = get_task_by_sample(s['id'])
+        if task:
+            sample_task_map[s['id']] = task
+
+    display_data = []
+    for s in samples:
+        task = sample_task_map.get(s['id'])
+        if task:
+            task_stage = get_stage_name(task['current_stage'])
+            task_status = get_status_name(task['task_status'])
+        else:
+            task_stage = '未创建'
+            task_status = '—'
+
+        display_data.append({
+            '样本编号': s['sample_no'],
+            '采样点': s['sampling_site'],
+            '喷发层位': s.get('eruption_layer', ''),
+            '分组': s.get('group_name', ''),
+            '总重量(g)': s['total_weight'],
+            '粒级数': s['sieve_count'],
+            '流程阶段': task_stage,
+            '任务状态': task_status,
+            '创建时间': s['created_at'],
+        })
+
+    df = pd.DataFrame(display_data)
+
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
     st.markdown("### 操作")
-    
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-    
+
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+
     with col1:
         sample_options = {f"{s['sample_no']} - {s['sampling_site']}": s['id'] for s in samples}
         selected = st.selectbox("选择样本", list(sample_options.keys()), label_visibility="collapsed")
         selected_id = sample_options[selected]
-    
+
     with col2:
         if st.button("查看详情", use_container_width=True):
             navigate_to("查看样本", viewing_sample_id=selected_id)
-    
+
     with col3:
         if st.button("✏️ 编辑", use_container_width=True):
             navigate_to("查看样本", viewing_sample_id=selected_id)
-    
+
     with col4:
+        has_task = selected_id in sample_task_map
+        if has_task:
+            if st.button("🔄 查看任务", use_container_width=True, type="primary"):
+                task = sample_task_map[selected_id]
+                st.session_state.wf_viewing_task_id = task['id']
+                st.session_state.wf_page = "任务列表"
+                navigate_to("流程任务")
+        else:
+            if st.button("➕ 创建任务", use_container_width=True):
+                task_id = create_task_for_sample(
+                    sample_id=selected_id,
+                    sample_no=selected.split(' - ')[0],
+                    created_by='system',
+                    description='从样本列表创建',
+                    priority='normal',
+                    deadline_hours=24,
+                )
+                st.success(f"任务创建成功！ID: {task_id}")
+                st.rerun()
+
+    with col5:
         if st.session_state.confirm_delete_id == selected_id:
             st.warning("⚠️ 确认删除？此操作不可恢复！")
             col_yes, col_no = st.columns(2)
@@ -319,6 +402,51 @@ def render_view_sample():
     default_sieves = get_default_sieve_sizes()
     existing_sieves = {d['sieve_size']: d['retained_weight'] for d in sample['sieve_data']}
     analysis = calculate_analysis(sample['sieve_data'], sample['total_weight'])
+
+    task = get_task_by_sample(sample_id)
+    if task:
+        st.info(
+            f"🔄 **流程状态：** {get_stage_name(task['current_stage'])} - "
+            f"{get_status_name(task['task_status'])} "
+            f"（优先级：{get_priority_name(task.get('priority', 'normal'))}）"
+        )
+        col_task1, col_task2 = st.columns([1, 4])
+        with col_task1:
+            if st.button("📋 查看任务详情", use_container_width=True, type="primary"):
+                st.session_state.wf_viewing_task_id = task['id']
+                st.session_state.wf_page = "任务列表"
+                navigate_to("流程任务")
+        with col_task2:
+            st.caption(
+                f"负责人: {task.get('assigned_to') or '未分派'} | "
+                f"截止时间: {task.get('deadline') or '未设置'} | "
+                f"创建时间: {task.get('created_at', '')}"
+            )
+        st.markdown("---")
+    else:
+        with st.expander("➕ 创建流程任务", expanded=False):
+            st.markdown("为该样本创建审批流程任务，跟踪样本在各阶段的处理进度。")
+            priority_options = {'高': 'high', '普通': 'normal', '低': 'low'}
+            priority_label = st.selectbox("任务优先级", list(priority_options.keys()), index=1,
+                                          key="view_sample_task_priority")
+            deadline_hours = st.number_input(
+                "第一阶段截止时间（小时后）",
+                min_value=1, max_value=720, value=24, step=1,
+                key="view_sample_task_deadline"
+            )
+            task_description = st.text_area("任务描述", height=60, key="view_sample_task_desc")
+            if st.button("创建任务", type="primary", use_container_width=True):
+                task_id = create_task_for_sample(
+                    sample_id=sample_id,
+                    sample_no=sample['sample_no'],
+                    created_by='system',
+                    description=task_description,
+                    priority=priority_options[priority_label],
+                    deadline_hours=deadline_hours,
+                )
+                st.success(f"任务创建成功！任务ID: {task_id}")
+                st.rerun()
+        st.markdown("---")
     
     with st.expander("基本信息", expanded=True):
         info_cols = st.columns(4)
@@ -1244,26 +1372,41 @@ def render_operation_logs():
 
 
 def main():
-    render_sidebar()
-    
     page = st.session_state.current_page
-    
-    if page == "样本列表":
-        render_sample_list()
-    elif page == "新建样本":
-        render_new_sample()
-    elif page == "查看样本":
-        render_view_sample()
-    elif page == "样本对比":
-        render_comparison()
-    elif page == "批量导入":
-        render_batch_import()
-    elif page == "剖面分析":
-        render_profile_analysis()
-    elif page == "操作日志":
-        render_operation_logs()
+
+    if page in ["流程任务", "协作看板", "流程统计", "超期提醒"]:
+        if "wf_page" not in st.session_state:
+            st.session_state.wf_page = "任务列表"
+        page_map = {
+            "流程任务": "任务列表",
+            "协作看板": "协作看板",
+            "流程统计": "流程统计",
+            "超期提醒": "超期提醒",
+        }
+        st.session_state.wf_page = page_map.get(page, "任务列表")
+        render_workflow_main()
+    elif page == "创建任务":
+        render_sidebar()
+        st.header("📝 创建流程任务")
+        render_create_task_from_sample()
     else:
-        render_sample_list()
+        render_sidebar()
+        if page == "样本列表":
+            render_sample_list()
+        elif page == "新建样本":
+            render_new_sample()
+        elif page == "查看样本":
+            render_view_sample()
+        elif page == "样本对比":
+            render_comparison()
+        elif page == "批量导入":
+            render_batch_import()
+        elif page == "剖面分析":
+            render_profile_analysis()
+        elif page == "操作日志":
+            render_operation_logs()
+        else:
+            render_sample_list()
 
 
 if __name__ == "__main__":
