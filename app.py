@@ -50,6 +50,19 @@ from workflow_pages import (
     render_workflow_main,
     render_create_task_from_sample,
 )
+from qc_db import (
+    init_qc_db,
+    check_and_create_sieve_recovery_alert,
+)
+from qc_pages import (
+    render_qc_dashboard,
+    render_batch_management,
+    render_instrument_management,
+    render_parallel_qc,
+    render_qc_alerts,
+    render_retest_requests,
+    render_qc_report,
+)
 
 st.set_page_config(
     page_title="火山灰样本分析系统",
@@ -59,6 +72,7 @@ st.set_page_config(
 
 init_db()
 init_workflow_db()
+init_qc_db()
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "样本列表"
@@ -116,9 +130,27 @@ def render_sidebar():
                 navigate_to(page)
 
         st.markdown("---")
+        st.subheader("📊 质量控制")
+
+        qc_items = [
+            ("📈 质量看板", "质量看板"),
+            ("📦 实验批次", "实验批次"),
+            ("🔬 仪器管理", "仪器管理"),
+            ("⚖️ 平行样对比", "平行样对比"),
+            ("🔔 质量预警", "质量预警"),
+            ("🔄 复测申请", "复测申请"),
+            ("📄 质量报告", "质量报告"),
+        ]
+
+        for label, page in qc_items:
+            is_active = st.session_state.current_page == page
+            if st.button(label, use_container_width=True, type="primary" if is_active else "secondary"):
+                navigate_to(page)
+
+        st.markdown("---")
 
         nav_items2 = [
-            ("📄 操作日志", "操作日志"),
+            ("� 操作日志", "操作日志"),
         ]
 
         for label, page in nav_items2:
@@ -1447,6 +1479,22 @@ def main():
         render_sidebar()
         st.header("📝 创建流程任务")
         render_create_task_from_sample()
+    elif page in ["质量看板", "实验批次", "仪器管理", "平行样对比", "质量预警", "复测申请", "质量报告"]:
+        render_sidebar()
+        if page == "质量看板":
+            render_qc_dashboard()
+        elif page == "实验批次":
+            render_batch_management()
+        elif page == "仪器管理":
+            render_instrument_management()
+        elif page == "平行样对比":
+            render_parallel_qc()
+        elif page == "质量预警":
+            render_qc_alerts()
+        elif page == "复测申请":
+            render_retest_requests()
+        elif page == "质量报告":
+            render_qc_report()
     else:
         render_sidebar()
         if page == "样本列表":
