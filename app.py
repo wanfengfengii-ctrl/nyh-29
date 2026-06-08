@@ -150,7 +150,7 @@ def render_sidebar():
         st.markdown("---")
 
         nav_items2 = [
-            ("� 操作日志", "操作日志"),
+            ("📄 操作日志", "操作日志"),
         ]
 
         for label, page in nav_items2:
@@ -273,7 +273,8 @@ def render_sample_list():
             styles.append(style)
         return styles
 
-    styled_df = df.drop(columns=['_status_code', '_priority_code', '_is_overdue']).style.apply(style_sample_task_row, axis=1)
+    styled_df = df.style.apply(style_sample_task_row, axis=1)
+    styled_df = styled_df.hide(axis="columns", subset=['_status_code', '_priority_code', '_is_overdue'])
 
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
