@@ -202,6 +202,53 @@ def render_view_sample():
         if sample['description']:
             st.markdown(f"**备注：** {sample['description']}")
     
+    with st.expander("✏️ 编辑基础信息", expanded=False):
+        with st.form("edit_basic_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_sample_no = st.text_input("样本编号 *", value=sample['sample_no'])
+                new_sampling_site = st.text_input("采样点 *", value=sample['sampling_site'])
+                new_eruption_layer = st.text_input("喷发层位", value=sample.get('eruption_layer') or '')
+            with col2:
+                new_total_weight = st.number_input(
+                    "样本总重量 (g) *",
+                    min_value=0.0,
+                    step=0.1,
+                    value=float(sample['total_weight'])
+                )
+                new_description = st.text_area(
+                    "备注",
+                    value=sample.get('description') or '',
+                    height=100
+                )
+            
+            edit_basic_submitted = st.form_submit_button("保存修改", type="primary", use_container_width=True)
+            
+            if edit_basic_submitted:
+                if not new_sample_no.strip():
+                    st.error("请输入样本编号")
+                elif not new_sampling_site.strip():
+                    st.error("请输入采样点")
+                else:
+                    existing = get_sample_by_no(new_sample_no.strip())
+                    if existing and existing['id'] != sample['id']:
+                        st.error(f"样本编号 {new_sample_no} 已被其他样本使用，请使用其他编号")
+                    else:
+                        total_sieved = sum(d['retained_weight'] for d in sample['sieve_data'])
+                        if total_sieved > new_total_weight + 0.001:
+                            st.error(f"修改后总重量 ({new_total_weight:.2f} g) 小于现有筛分总重量 ({total_sieved:.2f} g)，请先调整筛分数据")
+                        else:
+                            update_sample(
+                                sample['id'],
+                                new_sample_no.strip(),
+                                new_sampling_site.strip(),
+                                new_eruption_layer.strip(),
+                                new_total_weight,
+                                new_description.strip()
+                            )
+                            st.success("基础信息已更新！")
+                            st.rerun()
+    
     analysis = calculate_analysis(sample['sieve_data'], sample['total_weight'])
     
     with st.expander("筛分分析结果", expanded=True):
@@ -239,9 +286,25 @@ def render_view_sample():
         df_display = analysis['df'].copy()
         if not df_display.empty:
             df_display['粒级'] = df_display['sieve_size'].apply(get_sieve_label)
-            df_display = df_display[['粒级', 'sieve_size', 'retained_weight', 'weight_percent', 'cumulative_percent']]
-            df_display.columns = ['粒级', '筛孔(mm)', '留存重量(g)', '占比(%)', '累计(%)']
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            df_display = df_display[['粒级', 'sieve_size', 'retained_weight', 'weight_percent']]
+            df_display.columns = ['粒级', '筛孔(mm)', '留存重量(g)', '占比(%)']
+            
+            cum_df_display = analysis['cum_df'].copy()
+            cum_df_display = cum_df_display[cum_df_display['sieve_size'] <= df_display['sieve_size'].max()]
+            cum_df_display['筛孔(mm)'] = cum_df_display['sieve_size']
+            cum_df_display['小于该筛孔累计(%)'] = cum_df_display['cumulative_percent']
+            cum_df_display = cum_df_display[['筛孔(mm)', '小于该筛孔累计(%)']]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**各粒级留存**")
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            with col2:
+                st.markdown("**累计分布（小于该粒径）**")
+                st.dataframe(cum_df_display, use_container_width=True, hide_index=True)
+            
+            if analysis.get('pan_weight', 0) > 0:
+                st.caption(f"底盘（小于最小粒级）重量：{analysis['pan_weight']:.4f} g ({analysis['pan_percent']:.2f}%)")
         else:
             st.info("暂无筛分数据")
     
@@ -252,8 +315,8 @@ def render_view_sample():
             fig = make_subplots(
                 rows=2, cols=1,
                 shared_xaxes=True,
-                vertical_spacing=0.08,
-                subplot_titles=("粒径分布直方图", "累计粒径分布曲线")
+                vertical_spacing= 0.08,
+                subplot_titles=("粒径分布直方图", "累计粒径分布曲线（小于某粒径累计%）")
             )
             
             fig.add_trace(
@@ -267,15 +330,16 @@ def render_view_sample():
                 row=1, col=1
             )
             
+            cum_df = analysis['cum_df']
             fig.add_trace(
                 go.Scatter(
-                    x=analysis['df']['sieve_size'],
-                    y=analysis['df']['cumulative_percent'],
+                    x=cum_df['sieve_size'],
+                    y=cum_df['cumulative_percent'],
                     mode='lines+markers',
                     name='累计百分比',
                     line=dict(color='crimson', width=2),
                     marker=dict(size=6),
-                    hovertemplate='粒级: %{x} mm<br>累计: %{y:.2f}%<extra></extra>'
+                    hovertemplate='粒径: %{x:.3f} mm<br>小于该粒径累计: %{y:.2f}%<extra></extra>'
                 ),
                 row=2, col=1
             )
@@ -405,30 +469,41 @@ def render_comparison():
     summary_df = generate_summary_export(samples_data)
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
     
+    default_sieves = get_default_sieve_sizes()
+    
     st.markdown("### 累计粒径分布对比")
+    st.caption("曲线表示「小于该粒径的颗粒质量累计百分比」")
     
     fig = go.Figure()
     
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     
+    missing_info = []
     for i, sample in enumerate(samples_data):
         analysis = sample['analysis']
-        if not analysis['df'].empty:
+        existing_sieves = {d['sieve_size'] for d in sample['sieve_data']}
+        missing_sieves = [s for s in default_sieves if s not in existing_sieves]
+        if missing_sieves:
+            missing_labels = [get_sieve_label(s) for s in sorted(missing_sieves)]
+            missing_info.append(f"{sample['sample_no']} 缺失: {', '.join(missing_labels)}")
+        
+        if not analysis['cum_df'].empty:
             color = colors[i % len(colors)]
+            cum_df = analysis['cum_df']
             fig.add_trace(
                 go.Scatter(
-                    x=analysis['df']['sieve_size'],
-                    y=analysis['df']['cumulative_percent'],
+                    x=cum_df['sieve_size'],
+                    y=cum_df['cumulative_percent'],
                     mode='lines+markers',
                     name=sample['sample_no'],
                     line=dict(width=2, color=color),
                     marker=dict(size=6),
-                    hovertemplate=f"{sample['sample_no']}<br>粒级: %{{x}} mm<br>累计: %{{y:.2f}}%<extra></extra>"
+                    hovertemplate=f"{sample['sample_no']}<br>粒径: %{{x:.3f}} mm<br>小于该粒径累计: %{{y:.2f}}%<extra></extra>"
                 )
             )
     
     fig.update_xaxes(type="log", title_text="粒径 (mm)")
-    fig.update_yaxes(title_text="累计百分比 (%)", range=[0, 105])
+    fig.update_yaxes(title_text="小于该粒径累计 (%)", range=[0, 105])
     fig.update_layout(
         height=500,
         legend_title="样本编号",
@@ -436,6 +511,9 @@ def render_comparison():
     )
     
     st.plotly_chart(fig, use_container_width=True)
+    
+    if missing_info:
+        st.warning("⚠️ 部分样本缺失粒级数据：\n\n" + "\n\n".join(missing_info))
     
     st.markdown("### 粒径分布直方图对比")
     

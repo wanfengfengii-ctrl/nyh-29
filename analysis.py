@@ -20,6 +20,7 @@ def calculate_analysis(sieve_data: List[Dict], total_weight: float) -> Dict:
     if not sieve_data:
         return {
             'df': pd.DataFrame(),
+            'cum_df': pd.DataFrame(),
             'median_diameter': None,
             'sorting_coefficient': None,
             'sorting_grade': '无数据',
@@ -35,7 +36,6 @@ def calculate_analysis(sieve_data: List[Dict], total_weight: float) -> Dict:
     df = df.sort_values('sieve_size', ascending=True).reset_index(drop=True)
     
     df['weight_percent'] = (df['retained_weight'] / total_weight * 100).round(2)
-    df['cumulative_percent'] = df['weight_percent'].cumsum().round(2)
     
     total_retained = df['retained_weight'].sum()
     
@@ -46,11 +46,34 @@ def calculate_analysis(sieve_data: List[Dict], total_weight: float) -> Dict:
         pan_weight = 0
         pan_percent = 0
     
-    median_diameter = _calculate_percentile_diameter(df, 50)
-    d10 = _calculate_percentile_diameter(df, 10)
-    d25 = _calculate_percentile_diameter(df, 25)
-    d75 = _calculate_percentile_diameter(df, 75)
-    d90 = _calculate_percentile_diameter(df, 90)
+    cum_rows = []
+    cum_percent = pan_percent
+    cum_weight = pan_weight
+    
+    for i, row in df.iterrows():
+        cum_rows.append({
+            'sieve_size': row['sieve_size'],
+            'cumulative_percent': round(cum_percent, 2),
+            'cumulative_weight': round(cum_weight, 4),
+        })
+        cum_percent += row['weight_percent']
+        cum_weight += row['retained_weight']
+    
+    if len(df) > 0:
+        max_size = df['sieve_size'].max() * 2
+        cum_rows.append({
+            'sieve_size': max_size,
+            'cumulative_percent': 100.0,
+            'cumulative_weight': total_weight,
+        })
+    
+    cum_df = pd.DataFrame(cum_rows)
+    
+    median_diameter = _calculate_percentile_diameter(cum_df, 50)
+    d10 = _calculate_percentile_diameter(cum_df, 10)
+    d25 = _calculate_percentile_diameter(cum_df, 25)
+    d75 = _calculate_percentile_diameter(cum_df, 75)
+    d90 = _calculate_percentile_diameter(cum_df, 90)
     
     sorting_coefficient = None
     sorting_grade = '无法判断'
@@ -66,6 +89,7 @@ def calculate_analysis(sieve_data: List[Dict], total_weight: float) -> Dict:
     
     return {
         'df': df,
+        'cum_df': cum_df,
         'median_diameter': median_diameter,
         'sorting_coefficient': sorting_coefficient,
         'sorting_grade': sorting_grade,
@@ -136,8 +160,12 @@ def generate_export_data(samples_data: List[Dict]) -> pd.DataFrame:
     for sample in samples_data:
         analysis = sample['analysis']
         df = analysis['df']
+        cum_df = analysis['cum_df']
+        
+        cum_map = dict(zip(cum_df['sieve_size'], cum_df['cumulative_percent']))
         
         for _, row in df.iterrows():
+            cum_pct = cum_map.get(row['sieve_size'], '')
             export_rows.append({
                 '样本编号': sample['sample_no'],
                 '采样点': sample['sampling_site'],
@@ -146,7 +174,7 @@ def generate_export_data(samples_data: List[Dict]) -> pd.DataFrame:
                 '筛孔粒级(mm)': row['sieve_size'],
                 '留存重量(g)': row['retained_weight'],
                 '粒级占比(%)': row['weight_percent'],
-                '累计百分比(%)': row['cumulative_percent'],
+                '小于该筛孔累计(%)': cum_pct,
             })
         
         export_rows.append({
@@ -154,10 +182,10 @@ def generate_export_data(samples_data: List[Dict]) -> pd.DataFrame:
             '采样点': sample['sampling_site'],
             '喷发层位': sample.get('eruption_layer', ''),
             '样本总重量(g)': sample['total_weight'],
-            '筛孔粒级(mm)': '底盘',
+            '筛孔粒级(mm)': '底盘（小于最小粒级）',
             '留存重量(g)': analysis.get('pan_weight', 0),
             '粒级占比(%)': analysis.get('pan_percent', 0),
-            '累计百分比(%)': 100.0,
+            '小于该筛孔累计(%)': analysis.get('pan_percent', 0),
         })
     
     return pd.DataFrame(export_rows)
