@@ -707,6 +707,9 @@ def render_comparison():
         st.info("至少需要 2 个样本才能进行对比，请先创建更多样本。")
         return
     
+    sample_options = {f"{s['sample_no']} - {s['sampling_site']}": s['id'] for s in samples}
+    sample_labels = list(sample_options.keys())
+    
     all_groups = get_all_groups()
     if all_groups:
         group_select = st.selectbox(
@@ -719,11 +722,9 @@ def render_comparison():
             group_samples = get_samples_by_group(group_select)
             default_selected = [f"{s['sample_no']} - {s['sampling_site']}" for s in group_samples]
         else:
-            default_selected = list(samples.keys())[:3] if len(samples) >= 3 else list(samples.keys())
+            default_selected = sample_labels[:3] if len(sample_labels) >= 3 else sample_labels
     else:
-        default_selected = list(samples.keys())[:3] if len(samples) >= 3 else list(samples.keys())
-    
-    sample_options = {f"{s['sample_no']} - {s['sampling_site']}": s['id'] for s in samples}
+        default_selected = sample_labels[:3] if len(sample_labels) >= 3 else sample_labels
     selected_labels = st.multiselect(
         "选择要对比的样本（至少2个）",
         list(sample_options.keys()),
@@ -1009,8 +1010,10 @@ def render_profile_analysis():
     
     samples_data = []
     for sample in samples:
-        analysis = calculate_analysis(sample['sieve_data'], sample['total_weight'])
-        samples_data.append({**sample, 'analysis': analysis})
+        full_sample = get_sample(sample['id'])
+        if full_sample:
+            analysis = calculate_analysis(full_sample['sieve_data'], full_sample['total_weight'])
+            samples_data.append({**full_sample, 'analysis': analysis})
     
     sort_by = 'depth' if analysis_type == "深度剖面分析" else 'time'
     profile_df = prepare_profile_analysis(samples_data, sort_by=sort_by)

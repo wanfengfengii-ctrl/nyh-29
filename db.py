@@ -235,10 +235,9 @@ def delete_sample(sample_id):
 def batch_delete_samples(sample_ids):
     deleted = []
     for sid in sample_ids:
-        if delete_sample(sid):
-            sample = get_sample(sid)
-            if sample:
-                deleted.append(sample['sample_no'])
+        sample = get_sample(sid)
+        if sample and delete_sample(sid):
+            deleted.append(sample['sample_no'])
     
     if deleted:
         log_operation('batch_delete', 'sample', None, None, 
