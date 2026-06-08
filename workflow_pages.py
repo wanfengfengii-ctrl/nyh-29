@@ -235,13 +235,29 @@ def render_task_list():
 
     df = pd.DataFrame(display_data)
 
-    def highlight_status(row):
+    def style_status_row(row):
         status = row['状态码']
-        color = get_status_color(status)
-        return [f'color: {color}; font-weight: bold' if col == '状态' else '' for col in row.index]
+        is_overdue = row['is_overdue']
+        priority = row['优先级码']
+
+        styles = []
+        for col in row.index:
+            style = ''
+            if is_overdue:
+                style += 'background-color: #fff1f0; '
+            if col == '状态':
+                color = get_status_color(status)
+                style += f'color: {color}; font-weight: bold; '
+            if col == '优先级':
+                pri_color = get_priority_color(priority)
+                style += f'color: {pri_color}; font-weight: bold; '
+            styles.append(style)
+        return styles
+
+    styled_df = df.drop(columns=['状态码', '优先级码', 'is_overdue']).style.apply(style_status_row, axis=1)
 
     st.dataframe(
-        df.drop(columns=['状态码', '优先级码', 'is_overdue']),
+        styled_df,
         use_container_width=True,
         hide_index=True,
         height=400,
@@ -822,7 +838,22 @@ def render_overdue_alert():
         })
 
     df = pd.DataFrame(display_data)
-    st.dataframe(df, use_container_width=True, hide_index=True, height=400)
+
+    def style_overdue_row(row):
+        styles = []
+        for col in row.index:
+            style = 'background-color: #fff1f0; '
+            if col in ['状态', '超期时长']:
+                style += 'color: #cf1322; font-weight: bold; '
+            if col == '优先级':
+                pri_map = {'高': 'red', '普通': 'orange', '低': 'green'}
+                pri_color = pri_map.get(row['优先级'], 'gray')
+                style += f'color: {pri_color}; font-weight: bold; '
+            styles.append(style)
+        return styles
+
+    styled_overdue_df = df.style.apply(style_overdue_row, axis=1)
+    st.dataframe(styled_overdue_df, use_container_width=True, hide_index=True, height=400)
 
     st.markdown("---")
     st.subheader("📌 快速操作")

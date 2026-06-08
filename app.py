@@ -100,7 +100,7 @@ def render_sidebar():
                 navigate_to(page)
 
         st.markdown("---")
-        st.subheader("� 流程审批")
+        st.subheader("🔄 流程审批")
 
         wf_items = [
             ("📋 任务列表", "流程任务"),
@@ -174,9 +174,27 @@ def render_sample_list():
         if task:
             task_stage = get_stage_name(task['current_stage'])
             task_status = get_status_name(task['task_status'])
+            task_status_code = task['task_status']
+            is_overdue = False
+            if task.get('deadline') and task['task_status'] in ('pending', 'in_progress'):
+                try:
+                    from datetime import datetime as dt
+                    deadline_dt = dt.strptime(task['deadline'], '%Y-%m-%d %H:%M:%S')
+                    is_overdue = deadline_dt < dt.now()
+                except (ValueError, TypeError):
+                    pass
+            if is_overdue:
+                task_status = '已超期'
+                task_status_code = 'overdue'
+            task_priority = get_priority_name(task.get('priority', 'normal'))
+            task_priority_code = task.get('priority', 'normal')
         else:
             task_stage = '未创建'
             task_status = '—'
+            task_status_code = 'none'
+            task_priority = '—'
+            task_priority_code = 'none'
+            is_overdue = False
 
         display_data.append({
             '样本编号': s['sample_no'],
@@ -187,12 +205,45 @@ def render_sample_list():
             '粒级数': s['sieve_count'],
             '流程阶段': task_stage,
             '任务状态': task_status,
+            '_status_code': task_status_code,
+            '优先级': task_priority,
+            '_priority_code': task_priority_code,
+            '_is_overdue': is_overdue,
             '创建时间': s['created_at'],
         })
 
     df = pd.DataFrame(display_data)
 
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    def style_sample_task_row(row):
+        styles = []
+        is_overdue = row['_is_overdue']
+        status_code = row['_status_code']
+        priority_code = row['_priority_code']
+        for col in row.index:
+            style = ''
+            if is_overdue:
+                style += 'background-color: #fff1f0; '
+            if col == '任务状态':
+                color_map = {
+                    'pending': 'orange',
+                    'in_progress': '#1890ff',
+                    'completed': 'green',
+                    'returned': 'red',
+                    'overdue': 'red',
+                    'none': 'gray',
+                }
+                color = color_map.get(status_code, 'gray')
+                style += f'color: {color}; font-weight: bold; '
+            if col == '优先级':
+                pri_color_map = {'high': 'red', 'normal': 'orange', 'low': 'green', 'none': 'gray'}
+                pri_color = pri_color_map.get(priority_code, 'gray')
+                style += f'color: {pri_color}; font-weight: bold; '
+            styles.append(style)
+        return styles
+
+    styled_df = df.drop(columns=['_status_code', '_priority_code', '_is_overdue']).style.apply(style_sample_task_row, axis=1)
+
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
     st.markdown("### 操作")
 
@@ -593,9 +644,16 @@ def render_view_sample():
         reliab_color = get_reliability_color(analysis['reliability_level'])
         col_r1, col_r2 = st.columns([1, 3])
         with col_r1:
-            st.metric(
-                "分析可信度",
-                f"{analysis['reliability_score']:.0f}/100 ({analysis['reliability_level']})",
+            st.markdown("**分析可信度**")
+            st.markdown(
+                f"<h2 style='color: {reliab_color}; margin: 0;'>"
+                f"{analysis['reliability_score']:.0f}/100</h2>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f"<p style='color: {reliab_color}; font-weight: bold; margin-top: 4px;'>"
+                f"● {analysis['reliability_level']}</p>",
+                unsafe_allow_html=True
             )
         with col_r2:
             st.caption("可信度评估说明：")
